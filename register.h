@@ -13,7 +13,7 @@ public:
     std::string getIpAddress() const { return ipAddress; }
     std::string getType() const { return type; }
 
-private:
+
     std::string ipAddress;
     std::string type;
 };

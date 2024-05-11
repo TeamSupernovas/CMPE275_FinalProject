@@ -5,7 +5,7 @@
 #include <QObject>
 #include <map>
 #include <string>
-#include "register.h" // Include the Register class header
+#include "register.h" // Assuming this class correctly defines a Register struct or class
 
 class metadataAnalytics : public QTcpServer {
     Q_OBJECT
@@ -18,12 +18,13 @@ protected:
 
 private slots:
     void readData();
-    void analyticsNodeDisconnected(); // New slot declaration for handling client disconnections
+    void analyticsNodeDisconnected();
+    void monitorHeartbeat();
+    void broadcastNodeInfo(); // New function for broadcasting node info
 
 private:
     static std::map<std::string, Register> registrations; // Store registrations
     static std::map<std::string, QTcpSocket*> analyticNodes; // Store client sockets
-    void monitorHeartbeat(); // Function declaration for monitoring heartbeats
 };
 
-#endif // metadataAnalytics_H
+#endif // SERVER_H

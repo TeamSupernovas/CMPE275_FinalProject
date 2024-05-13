@@ -30,8 +30,8 @@ QString getLocalIpAddress() {
 }
 metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
     QTimer* timer = new QTimer(this);
-   // connect(timer, &QTimer::timeout, this, &metadataAnalytics::monitorHeartbeat);
-    timer->start(5000);
+    // connect(timer, &QTimer::timeout, this, &metadataAnalytics::monitorHeartbeat);
+   // timer->start(5000);
     qDebug() << "metadataAnalytics created.";
 
     // Set up election timer
@@ -42,7 +42,87 @@ metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
     // Generate number and get IP address
     myNumber = generateNumber();
     myIP = getLocalIpAddress();
+
+    // Initialize initAnalyticsTimer
+    initAnalyticsTimer = new QTimer(this);
+    connect(initAnalyticsTimer, &QTimer::timeout, this, &metadataAnalytics::initAnalytics);
+    //electionTimer->start(1500); // 30 seconds
+    // Start the initAnalyticsTimer with a single-shot
+    initAnalyticsTimer->singleShot(8000, this, &metadataAnalytics::initAnalytics);
 }
+
+
+void metadataAnalytics::initAnalytics() {
+    // Collect IPs of all analytics nodes
+    std::vector<std::string> analyticsNodeIPs;
+    // qDebug() << "here1111111" << "\n";
+    for(const auto& reg : registrations) {
+
+      //  qDebug() << "here222" << "\n";
+        if (QString::fromStdString(reg.second.getType()) == "analytics") {
+
+            analyticsNodeIPs.push_back((reg.second.getIpAddress()));
+        }
+    }
+
+    // Iterate over analytics nodes and distribute replicas
+    for(const auto& reg : registrations) {
+        if (reg.second.getType() == "analytics") {
+            // Find replicas for this analytics node
+           // qDebug() << "" << "\n";
+            std::vector<std::string> replicas = findReplicas(reg.second.getIpAddress(), analyticsNodeIPs);
+
+            // Convert replicas to QStringList
+            QStringList replicasStringList;
+            for (const auto& replica : replicas) {
+                replicasStringList << QString::fromStdString(replica);
+            }
+
+            // Construct API request
+            QJsonObject requestData;
+            requestData["requestType"] = "Init Analytics";
+            requestData["replicas"] = QJsonArray::fromStringList(replicasStringList);
+            qDebug() << requestData << "\n";
+            // Convert JSON data to QByteArray
+            QJsonDocument doc(requestData);
+            QByteArray requestDataBytes = doc.toJson();
+
+            // Send API request to the analytics node
+            QTcpSocket* nodeSocket = analyticNodes[reg.second.getIpAddress()];
+            if (nodeSocket && nodeSocket->state() == QAbstractSocket::ConnectedState) {
+                nodeSocket->write(requestDataBytes);
+                nodeSocket->flush();
+            }
+        }
+    }
+}
+
+std::vector<std::string> metadataAnalytics::findReplicas(const std::string& nodeIP, const std::vector<std::string>& analyticsNodeIPs) {
+    std::vector<std::string> replicas;
+
+    // If there are fewer than 3 analytics nodes, return empty list
+    if (analyticsNodeIPs.size() <= 2) {
+        return replicas;
+    }
+
+    // Calculate the index of the current node's IP in the sorted list of analytics node IPs
+    auto it = std::lower_bound(analyticsNodeIPs.begin(), analyticsNodeIPs.end(), nodeIP);
+    int currentIndex = std::distance(analyticsNodeIPs.begin(), it);
+
+    // Calculate the total number of analytics nodes
+    int numAnalyticsNodes = analyticsNodeIPs.size();
+
+    // Calculate the indices of the two replicas using a fair hashing mechanism
+    int firstReplicaIndex = (currentIndex + 1) % numAnalyticsNodes;
+    int secondReplicaIndex = (currentIndex + 2) % numAnalyticsNodes;
+
+    // Add the IPs of the replicas to the list
+    replicas.push_back(analyticsNodeIPs[firstReplicaIndex]);
+    replicas.push_back(analyticsNodeIPs[secondReplicaIndex]);
+
+    return replicas;
+}
+
 
 metadataAnalytics::~metadataAnalytics() {
     for (auto& node : analyticNodes) {
@@ -52,6 +132,11 @@ metadataAnalytics::~metadataAnalytics() {
 
 void metadataAnalytics::incomingConnection(qintptr socketDescriptor) {
     QTcpSocket *clientSocket = new QTcpSocket(this);
+    // Self-register current node only once at start
+    if (!registeredSelf) {
+        registerNode(myIP, typeNode, computeCapacityHeuristic());
+        registeredSelf = true;
+    }
     if (clientSocket->setSocketDescriptor(socketDescriptor)) {
         QString actualIP = clientSocket->peerAddress().toString();
 
@@ -60,11 +145,7 @@ void metadataAnalytics::incomingConnection(qintptr socketDescriptor) {
         qDebug() << "Incoming connection established from IP:" << actualIP;
         analyticNodes[actualIP.toStdString()] = clientSocket;
 
-        // Self-register current node only once at start
-        if (!registeredSelf) {
-            registerNode(myIP, typeNode, computeCapacityHeuristic());
-            registeredSelf = true;
-        }
+
     } else {
         delete clientSocket;
     }

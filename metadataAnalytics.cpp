@@ -16,9 +16,21 @@ std::map<std::string, Register> metadataAnalytics::registrations;
 std::map<std::string, QTcpSocket*> metadataAnalytics::analyticNodes;
 std::map<std::string, NodeInfo> nodeMap; // New map to store node information
 
+QString getLocalIpAddress() {
+    // QList<QHostAddress> list = QNetworkInterface::allAddresses();
+    // for (int nIter = 0; nIter < list.count(); nIter++) {
+    //     if (list[nIter].protocol() == QAbstractSocket::IPv4Protocol && !list[nIter].isLoopback()) {
+    //         qDebug() << "Local IPv4 Address found:" << list[nIter].toString();
+    //         return list[nIter].toString();
+    //     }
+    // }
+    // qDebug() << "No non-loopback IPv4 address found, defaulting to localhost.";
+   // return "localhost";
+    return "192.168.1.102";  // Default to localhost if no suitable IP found
+}
 metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
     QTimer* timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &metadataAnalytics::monitorHeartbeat);
+   // connect(timer, &QTimer::timeout, this, &metadataAnalytics::monitorHeartbeat);
     timer->start(5000);
     qDebug() << "metadataAnalytics created.";
 
@@ -29,7 +41,7 @@ metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
 
     // Generate number and get IP address
     myNumber = generateNumber();
-    myIP = QHostAddress(QHostAddress::LocalHost).toString();
+    myIP = getLocalIpAddress();
 }
 
 metadataAnalytics::~metadataAnalytics() {
@@ -42,6 +54,7 @@ void metadataAnalytics::incomingConnection(qintptr socketDescriptor) {
     QTcpSocket *clientSocket = new QTcpSocket(this);
     if (clientSocket->setSocketDescriptor(socketDescriptor)) {
         QString actualIP = clientSocket->peerAddress().toString();
+
         connect(clientSocket, &QTcpSocket::readyRead, this, &metadataAnalytics::readData);
         connect(clientSocket, &QTcpSocket::disconnected, this, &metadataAnalytics::analyticsNodeDisconnected);
         qDebug() << "Incoming connection established from IP:" << actualIP;
@@ -49,12 +62,13 @@ void metadataAnalytics::incomingConnection(qintptr socketDescriptor) {
 
         // Self-register current node only once at start
         if (!registeredSelf) {
-            registerNode(actualIP, typeNode, computeCapacityHeuristic());
+            registerNode(myIP, typeNode, computeCapacityHeuristic());
             registeredSelf = true;
         }
     } else {
         delete clientSocket;
     }
+    qDebug() << registrations.size() << "\n";
 }
 
 void metadataAnalytics::readData() {
@@ -83,7 +97,7 @@ void metadataAnalytics::readData() {
 
             clientSocket->write(responseData);
             clientSocket->waitForBytesWritten();
-            qDebug() << "Heartbeat response sent to server.";
+            //qDebug() << "Heartbeat response sent to server.";
         } else if (requestType == "Node Discovery") {
             QJsonArray nodes = obj["nodes"].toArray();
             nodeMap.clear(); // Clear existing data before updating
@@ -107,12 +121,19 @@ void metadataAnalytics::readData() {
         } else if (requestType == "Election Message") {
             int receivedNumber = obj["Current Number"].toInt();
             QString receivedIP = obj["IP"].toString(); // Received IP address
+            qDebug() << receivedIP << "::" << receivedNumber << "\n";
             processElectionMessage(receivedNumber, receivedIP.toStdString());
         }
+        else if (requestType == "Leader Announcement") {
+
+            // QJsonObject obj = value.toObject();
+            std::string receivedNumber = obj["leaderIP"].toString().toStdString();
+            std::string nodeType=obj["nodeType"].toString().toStdString();
+            leader =obj["leaderIP"].toString();
+            qDebug()<<"Wining Node"<<receivedNumber<<"...Type...."<<nodeType;
+        }
         else{
-            qDebug() << requestType << "   btyihbhvgkyulhjk\n";
-            leader = obj["IP"].toString();
-            qDebug() << leader << "\n";
+            qDebug()<<requestType<<"\n";
         }
     }
 
@@ -121,7 +142,7 @@ void metadataAnalytics::readData() {
         QString requestType = obj["requestType"].toString();
 
         if (requestType == "Heartbeat Response") {
-            qDebug() << "Received heartbeat response from self.";
+           // qDebug() << "Received heartbeat response from self.";
         } else if (requestType == "Node Discovery") {
             QJsonArray nodes = obj["nodes"].toArray();
             nodeMap.clear(); // Clear existing data before updating
@@ -143,12 +164,23 @@ void metadataAnalytics::readData() {
 void metadataAnalytics::processElectionMessage(int receivedNumber, const std::string& ipAddress) {
     // Compare received number with myNumber
     if (receivedNumber > myNumber) {
-        // Forward the election message to the next node
+        // Forward the election message to the next node of type "metadata Analytics"
         auto currentNode = registrations.find(myIP.toStdString());
-        auto nextNode = currentNode;
-        ++nextNode;
+        if (currentNode == registrations.end()) {
+            qDebug() << "Current node not found in registrations.";
+            return;
+        }
 
-        if (nextNode != registrations.end()) {
+        auto nextNode = currentNode;
+        do {
+            ++nextNode; // Move to the next node
+            if (nextNode == registrations.end()) {
+                // Reached the end, loop back to the beginning
+                nextNode = registrations.begin();
+            }
+        } while (nextNode->second.getType() != "metadata Analytics" && nextNode != currentNode);
+
+        if (nextNode != currentNode && nextNode != registrations.end()) {
             QJsonObject electionMessage;
             electionMessage["requestType"] = "Election Message";
             electionMessage["Current Number"] = receivedNumber; // Forward the received number
@@ -162,16 +194,27 @@ void metadataAnalytics::processElectionMessage(int receivedNumber, const std::st
                 nextSocket->flush();
             }
         } else {
-            // No next node to forward the message, declare this node as the leader
+            // No next node of type "metadata Analytics" to forward the message, declare this node as the leader
             sendLeaderInfo(ipAddress);
         }
     } else if (receivedNumber < myNumber) {
-        // Send the received number to the next node
+        // Send the received number to the next node of type "metadata Analytics"
         auto currentNode = registrations.find(myIP.toStdString());
-        auto nextNode = currentNode;
-        ++nextNode;
+        if (currentNode == registrations.end()) {
+            qDebug() << "Current node not found in registrations.";
+            return;
+        }
 
-        if (nextNode != registrations.end()) {
+        auto nextNode = currentNode;
+        do {
+            ++nextNode; // Move to the next node
+            if (nextNode == registrations.end()) {
+                // Reached the end, loop back to the beginning
+                nextNode = registrations.begin();
+            }
+        } while (nextNode->second.getType() != "metadata Analytics" && nextNode != currentNode);
+
+        if (nextNode != currentNode && nextNode != registrations.end()) {
             QJsonObject electionMessage;
             electionMessage["requestType"] = "Election Message";
             electionMessage["Current Number"] = receivedNumber; // Forward the received number
@@ -187,6 +230,7 @@ void metadataAnalytics::processElectionMessage(int receivedNumber, const std::st
         }
     } else {
         // Election tie, declare this node as the leader
+        qDebug() << "TIE" << "\n";
         sendLeaderInfo(ipAddress);
     }
 }
@@ -232,6 +276,33 @@ void metadataAnalytics::broadcastNodeInfo() {
     }
 }
 
+void metadataAnalytics::broadcastLeaderNodeInfo(const std::string& ipAddress) {
+    qDebug() << "Broadcasting Leader Information";
+
+
+    QJsonObject nodeObject;
+    nodeObject["requestType"] = "Leader Announcement";
+    nodeObject["leaderIP"] = QString::fromStdString(ipAddress);
+    nodeObject["nodeType"] = QString::fromStdString(typeNode);
+    //nodesArray.append(nodeObject);
+    //}
+
+    //QJsonObject parentNode;
+    //parentNode["requestType"] = "Node Discovery";
+    //parentNode["nodes"] = nodesArray;
+
+    QJsonDocument doc(nodeObject);
+    QByteArray nodeData = doc.toJson();
+
+    for (const auto& node : analyticNodes) {
+        QTcpSocket* clientSocket = node.second;
+        if (clientSocket && clientSocket->state() == QAbstractSocket::ConnectedState) {
+            clientSocket->write(nodeData);
+            clientSocket->flush();
+        }
+    }
+}
+
 void metadataAnalytics::registerNode(const QString& ipAddress, const std::string& type, double computingCapacity) {
     registrations[ipAddress.toStdString()] = Register(ipAddress.toStdString(), type, computingCapacity);
 }
@@ -265,7 +336,7 @@ double metadataAnalytics::computeCapacityHeuristic() {
 
 void metadataAnalytics::conductElection() {
     if (registrations.empty()) {
-        qDebug() << "No nodes registered for election.";
+        //qDebug() << "No nodes registered for election.";
         return;
     }
     if (!leader.isEmpty()) {
@@ -278,11 +349,23 @@ void metadataAnalytics::conductElection() {
     qDebug() << "Conducting election...";
 
     auto currentNode = registrations.find(myIP.toStdString()); // Start from the current node
-    auto nextNode = currentNode;
-    ++nextNode; // Move to the next node
+    if (currentNode == registrations.end()) {
+        qDebug() << "Current node not found in registrations.";
+        return;
+    }
 
-    // Send election message to the next node
-    if (nextNode != registrations.end()) {
+    // Find the next eligible node of type "metadata Analytics"
+    auto nextNode = currentNode;
+    do {
+        ++nextNode; // Move to the next node
+        if (nextNode == registrations.end()) {
+            // Reached the end, loop back to the beginning
+            nextNode = registrations.begin();
+        }
+    } while (nextNode->second.getType() != "metadata Analytics" && nextNode != currentNode);
+
+    // Send election message to the next eligible node
+    if (nextNode != currentNode && nextNode != registrations.end()) {
         QJsonObject electionMessage;
         electionMessage["requestType"] = "Election Message";
         electionMessage["Current Number"] = myNumber;
@@ -296,34 +379,57 @@ void metadataAnalytics::conductElection() {
             nextSocket->flush();
         }
     } else {
-        qDebug() << "No next node to send election message to.";
+        qDebug() << "No next node of type metadata Analytics to send election message to.";
         sendLeaderInfo(myIP.toStdString());
     }
 }
 
+
 void metadataAnalytics::sendLeaderInfo(const std::string& ipAddress) {
     // Send leader information to the node
-    QTcpSocket* leaderSocket = analyticNodes[ipAddress];
-    if (leaderSocket && leaderSocket->state() == QAbstractSocket::ConnectedState) {
-        QJsonObject leaderInfo;
-        leaderInfo["requestType"] = "Leader Announcement";
-        leaderInfo["message"] = "I am the leader.";
-        leaderInfo["leaderIP"] = QString::fromStdString(ipAddress);
-        QJsonDocument doc(leaderInfo);
-        leaderSocket->write(doc.toJson());
-        leaderSocket->flush();
-        qDebug() << "Leader information sent to" << QString::fromStdString(ipAddress);
-    }
+    // QTcpSocket* leaderSocket = analyticNodes[ipAddress];
+    // qDebug() << "here..." << "\n";
+    // if(ipAddress == myIP.toStdString()){
+    leader = QString::fromStdString(ipAddress);
+    metadataAnalytics::broadcastLeaderNodeInfo(ipAddress);
+
+    // }
+    // if (leaderSocket && leaderSocket->state() == QAbstractSocket::ConnectedState) {
+    //     QJsonObject leaderInfo;
+    //     qDebug() << "here1..." << "\n";
+    //     leaderInfo["requestType"] = "Leader Announcement";
+    //     leaderInfo["message"] = "I am the leader.";
+    //     leaderInfo["leaderIP"] = QString::fromStdString(ipAddress);
+    //     leader = QString::fromStdString(ipAddress);
+    //     QJsonDocument doc(leaderInfo);
+    //     leaderSocket->write(doc.toJson());
+    //     leaderSocket->flush();
+    //     qDebug() << "Leader information sent to" << QString::fromStdString(ipAddress);
+    // }
 }
 
 void metadataAnalytics::analyticsNodeDisconnected() {
     QTcpSocket *clientSocket = qobject_cast<QTcpSocket*>(sender());
+
     if (!clientSocket) return;
 
+   // QString ipAddress = QHostAddress(clientSocket->peerAddress()).toString();
     QString ipAddress = clientSocket->peerAddress().toString();
+    std::string addr= ipAddress.toStdString().substr(7);
+    //if (addr.protocol() == QAbstractSocket::IPv6Protocol && addr.isIPv4Mapped()) {
+       // addr =  // Skip the '::ffff:' part
+    //}
+    if(addr == leader.toStdString()){
+        leader = "";
+        qDebug() << "Insider info .... " << "\n";
+        connect(electionTimer, &QTimer::timeout, this, &metadataAnalytics::conductElection);
+        //electionTimer->start(3000); // 30 seconds
+    }
     qDebug() << "Client disconnected, IP:" << ipAddress;
     deregisterNode(ipAddress); // Remove the disconnected node from registrations
+    qDebug() << ipAddress.toStdString() << " klnon\n";
     analyticNodes.erase(ipAddress.toStdString()); // Erase the disconnected node from the analyticNodes map
+    registrations.erase(ipAddress.toStdString());
     clientSocket->deleteLater();
     broadcastNodeInfo(); // Broadcast updated node information
 }

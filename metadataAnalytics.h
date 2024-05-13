@@ -28,6 +28,7 @@ private slots:
     double computeCapacityHeuristic();
     int generateNumber(); // Declaration for computeCapacityHeuristic
     void processElectionMessage(int receivedNumber, const std::string& ipAddress);
+    void broadcastLeaderNodeInfo(const std::string& ipAddress);
 
 private:
     static std::map<std::string, Register> registrations; // Store registrations

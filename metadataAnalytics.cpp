@@ -347,7 +347,7 @@ void metadataAnalytics::broadcastNodeInfo() {
 
     QJsonDocument doc(parentNode);
     QByteArray nodeData = doc.toJson();
-
+    qDebug() << registrations.size() << " ================>\n";
     for (const auto& node : analyticNodes) {
         QTcpSocket* clientSocket = node.second;
         if (clientSocket && clientSocket->state() == QAbstractSocket::ConnectedState) {

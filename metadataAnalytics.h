@@ -29,6 +29,9 @@ private slots:
     int generateNumber(); // Declaration for computeCapacityHeuristic
     void processElectionMessage(int receivedNumber, const std::string& ipAddress);
     void broadcastLeaderNodeInfo(const std::string& ipAddress);
+    void initAnalytics();
+    std::vector<std::string> findReplicas(const std::string& nodeIP, const std::vector<std::string>& analyticsNodeIPs);
+
 
 private:
     static std::map<std::string, Register> registrations; // Store registrations
@@ -39,6 +42,7 @@ private:
     int myNumber; // Store generated number for the current node
     QString leader = "";
     QTimer* electionTimer;
+    QTimer* initAnalyticsTimer;
 };
 
 #endif // METADATA_ANALYTICS_H

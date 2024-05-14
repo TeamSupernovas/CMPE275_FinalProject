@@ -207,7 +207,7 @@ int main(int argc, char *argv[]) {
     QJsonObject registrationObject;
     registrationObject["requestType"] = "registering";
     registrationObject["ip"] =myIp;  // Send the actual IP address discovered
-    registrationObject["nodeType"] = "analytics";
+    registrationObject["nodeType"] = "metadata Analytics";
     registrationObject["computingCapacity"] = computeCapacityHeuristic(); // Send computing capacity heuristic
     QJsonDocument registrationDoc(registrationObject);
     QByteArray registrationData = registrationDoc.toJson();

@@ -7,6 +7,27 @@
 #include <sys/sysinfo.h> // Include for sysinfo struct
 #include <QThread> // Include for QThread
 
+
+/* TODO FLOW:
+ *      - FIX ANOTHER TIME AGNOSTIC QUERY
+ *      - CREATE ANOTHER FILE FOR METADATA ANALYTICS(KEEP THIS ONE FOR REGISTRATION)
+ *          -   HAVE ALL THE THINGS UPDATED, I UPDATE ONLY SOME AT A TIME
+ *          -   PREFER TO USE NODE MAP OVER REGISTRATION
+ *      - LOAD BALANCING
+ *      - INDEXING
+ *
+ *      NOTE: ANALYTIC MAP NAME IS MIS LEADING IT CONTAINS ALL THE INFO OF ALL THE INCOMING CONNECTIONS
+ * /
+
+
+/*
+    TODO-1: THIS FILE IS FOR REGISTRATION NODE, SEPERATE THE CODE FOR METADATA ANALYTICS
+
+    ---- FOR METADATA ANALYTICS ALL IT KNOWS FROM NODE DISCOVERY PHASE - TRY LEVERAGING NnodeMap
+    --- FOR REGISTRATION NODE YOU CAN KEEP AS IT IS, FOR METADATA ANALYTICS CHANGE IT(CREATE DIFFERENT FILE)
+*/
+
+
 struct NodeInfo {
     QString nodeType;
     QString ip;
@@ -41,9 +62,25 @@ QString getLocalIpAddress() {
     // }
     // qDebug() << "No non-loopback IPv4 address found, defaulting to localhost.";
    // return "localhost";
+
+
+
+    /*
+    TODO-2: GOTTA CHANGE THIS TO STATIC IP FOR YOUR LAPTOP/NODE
+    ---- WILL DO WHEN WE DO, THIS IS LAST STEP
+    */
+
     return "192.168.1.102";  // Default to localhost if no suitable IP found
 }
 metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
+
+    /*
+    TODO-3: ALL THE TIMES HERE NEEDED TO BE CHANGED, WE HAVE TO GET REALSISTIC ESTIMATES
+
+    ---- THIS IS LAST STEP AGAIN
+    */
+
+
     QTimer* timer = new QTimer(this);
     // connect(timer, &QTimer::timeout, this, &metadataAnalytics::monitorHeartbeat);
    // timer->start(5000);
@@ -67,10 +104,19 @@ metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
     initAnalyticsTimer->singleShot(7000, this, &metadataAnalytics::initAnalytics);
 }
 
+
+/*TODO-8: FOR ALL RELATED FUNCTION USE NODE MAP FOR BELOW THREE INSTEAD OF OTHERS FOR METADATA*/
+
 // Function to initialize analytics and find replicas
 void metadataAnalytics::initAnalytics() {
     // Collect IPs of all analytics nodes
     qDebug() << "===============" << "\n";
+
+      /*
+        TODO-8: BIG NO IMPLEMENTATION, TRY USING NODE INFO INSTEAD FOR METADATA ANALYTICS
+         */
+
+
     std::vector<std::string> analyticsNodeIPs;
     for(const auto& reg : registrations) {
         if (QString::fromStdString(reg.second.getType()) == "analytics") {
@@ -167,6 +213,13 @@ metadataAnalytics::~metadataAnalytics() {
 void metadataAnalytics::incomingConnection(qintptr socketDescriptor) {
     QTcpSocket *clientSocket = new QTcpSocket(this);
     // Self-register current node only once at start
+
+    /*
+    TODO-3: UPDATE IN OTHERS AS WELL NODE MAP, ONLY REGISTRATION
+
+    ---- BASICALLY UPDATE EVERYTHING AT EVERY PLACE, AT SOME PLACES I AM UPDATING ONLY FEW PARTS
+    ---- FOR EXAMPLE I MIGHT BE FORGETING TO UPDATE NODE MAP
+    */
     if (!registeredSelf) {
         registerNode(myIP, typeNode, computeCapacityHeuristic());
         registeredSelf = true;
@@ -214,6 +267,13 @@ void metadataAnalytics::readData() {
             clientSocket->waitForBytesWritten();
             //qDebug() << "Heartbeat response sent to server.";
         } else if (requestType == "Node Discovery") {
+
+            /*
+        TODO-4: CONSISTENT UPDATES FOR ALL CORRESSPONDING AND USE SOMETHING COMMON TO RETRIEVE
+
+        ---- BASICALLY UPDATE EVERYTHING AT EVERY PLACE, AT SOME PLACES I AM UPDATING ONLY FEW PARTS
+        ---- HERE I AM CLEARING NODE MAP, DON'T FORGET THE SELF REGISTRATION OR SELF DETAILS
+         */
             QJsonArray nodes = obj["nodes"].toArray();
             nodeMap.clear(); // Clear existing data before updating
             for (const QJsonValue &value : nodes) {
@@ -228,10 +288,18 @@ void metadataAnalytics::readData() {
                          << "Computing Capacity:" << info.computingCapacity; // Print computing capacity
             }
         } else if (requestType == "registering") {
+            /*
+        TODO-4: CONSISTENT UPDATES FOR ALL CORRESSPONDING AND USE SOMETHING COMMON TO RETRIEVE
+
+        ---- BASICALLY UPDATE EVERYTHING AT EVERY PLACE, AT SOME PLACES I AM UPDATING ONLY FEW PARTS
+        ---- FOR EX: I AM NOT UPDATING MY NODE MAP HERE
+        ---- USE PARAMETERS RECEIVED
+        ---- FOR EX: I AM USING IPADDRESS FROM PEER ADDRESS BUT USE ONE YOU RECEIVED IN PAYLOAD
+         */
             QString type = obj["nodeType"].toString();
             double computingCapacity = obj["computingCapacity"].toDouble(); // Extract computing capacity from JSON
             qDebug() << "Registration request from IP:" << ipAddress << "Type:" << type << "Computing Capacity:" << computingCapacity;
-            analyticNodes[obj["ip"].toString().toStdString()] = clientSocket;
+            analyticNodes[obj["ip"].toString().toStdString()] = clientSocket; /*TODO: CHANGE IP*/
             if(type.toStdString() == "analytics"){
                 totalAnalyticsServers++;
             }
@@ -382,6 +450,7 @@ void metadataAnalytics::readData() {
 }
 
 
+/*TODO-8: FOR ALL RELATED FUNCTION USE NODE MAP INSTEAD OF REGISTARTIONS FOR BELOW NSTEAD OF OTHERS FOR METADATA*/
 void metadataAnalytics::distributeDataToAnalyticsServers(const QByteArray& data) {
     // Get the data from the ingestion request
     QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -577,6 +646,12 @@ void metadataAnalytics::monitorHeartbeat() {
 void metadataAnalytics::broadcastNodeInfo() {
     qDebug() << "Broadcasting Node Discovery Information";
 
+    /*
+        TODO-6: BIG NO IMPLEMENTATION, TRY USING NODE INFO INSTEAD FOR METADATA ANALYTICS
+        FOR REGISTRATION NODE, KEEP AS IT IS
+
+         */
+
     QJsonArray nodesArray;
     for (const auto& reg : registrations) {
         QJsonObject nodeObject;
@@ -726,6 +801,10 @@ void metadataAnalytics::sendLeaderInfo(const std::string& ipAddress) {
     // qDebug() << "here..." << "\n";
     // if(ipAddress == myIP.toStdString()){
     leader = QString::fromStdString(ipAddress);
+
+    /*
+        TODO-7: BIG NO IMPLEMENTATION, TRY USING BROADCASTNODEINFO INSTEAD LEADERINFO
+         */
     metadataAnalytics::broadcastLeaderNodeInfo(ipAddress);
 
     // }

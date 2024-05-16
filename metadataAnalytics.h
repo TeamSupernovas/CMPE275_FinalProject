@@ -31,6 +31,9 @@ private slots:
     void broadcastLeaderNodeInfo(const std::string& ipAddress);
     void initAnalytics();
     std::vector<std::string> findReplicas(const std::string& nodeIP, const std::vector<std::string>& analyticsNodeIPs);
+    void updateReplicaStatus(const std::string& ipAddress, const std::string& replicaIP, bool status);
+    //void sendToAnalyticsNode(const QByteArray& data);
+    void distributeDataToAnalyticsServers(const QByteArray& data);
 
 
 private:
@@ -41,6 +44,7 @@ private:
     QString myIP; // Store current node's IP address
     int myNumber; // Store generated number for the current node
     QString leader = "";
+    QString leaderIngestion = "";
     QTimer* electionTimer;
     QTimer* initAnalyticsTimer;
 };

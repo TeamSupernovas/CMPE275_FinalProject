@@ -41,7 +41,7 @@ QString getLocalIpAddress() {
     //     }
     // }
     // qDebug() << "No non-loopback IPv4 address found, defaulting to localhost.";
-    return "192.168.1.101";  // Default to localhost if no suitable IP found
+    return "192.168.1.198";  // Default to localhost if no suitable IP found
 }
 
 double computeCapacityHeuristic() {
@@ -123,7 +123,7 @@ void handleAnalyticsRequest(const QJsonObject& obj) {
     if (obj.contains("data") && obj["data"].isArray()) {
         QJsonArray dataArray = obj["data"].toArray();
 
-       // qDebug() << "Received analytics request. Data array size:" << dataArray.size();
+        // qDebug() << "Received analytics request. Data array size:" << dataArray.size();
         //qDebug() << dataArray << "\n";
         // Iterate through the data array to calculate average for each area
         for (const auto& value : dataArray) {
@@ -310,7 +310,7 @@ int main(int argc, char *argv[]) {
     // Read settings from configuration file
     QSettings settings("config.env", QSettings::IniFormat);
     //QString serverIp = settings.value("SERVER_IP", "192.168.1.102").toString();
-   QString serverIp = settings.value("SERVER_IP", "localhost").toString();
+    QString serverIp = settings.value("SERVER_IP", "localhost").toString();
     qDebug() << serverIp << "\n";
     int port = settings.value("PORT", 12351).toInt(); // Default port if not specified
 

@@ -12,9 +12,24 @@ struct NodeInfo {
     QString ip;
     double computingCapacity; // Include computing capacity in NodeInfo
 };
+
+struct ReplicaInfo {
+    std::string replicaIP;
+    bool isTrue;
+};
+
+int requestId = 0;
+int requestIdQuery = 0;
+
+// Define a new map to store replica information for each IP address
+std::map<std::string, std::vector<ReplicaInfo>> replicaMap;
 std::map<std::string, Register> metadataAnalytics::registrations;
 std::map<std::string, QTcpSocket*> metadataAnalytics::analyticNodes;
 std::map<std::string, NodeInfo> nodeMap; // New map to store node information
+// Define a map to store data for each requestId
+std::map<int, QByteArray> requestDataMap;
+std::map<int, std::pair<std::string,double>> requestQuery;
+int totalAnalyticsServers = 0;
 
 QString getLocalIpAddress() {
     // QList<QHostAddress> list = QNetworkInterface::allAddresses();
@@ -34,33 +49,31 @@ metadataAnalytics::metadataAnalytics(QObject *parent) : QTcpServer(parent) {
    // timer->start(5000);
     qDebug() << "metadataAnalytics created.";
 
-    // Set up election timer
-    electionTimer = new QTimer(this);
-    connect(electionTimer, &QTimer::timeout, this, &metadataAnalytics::conductElection);
-    electionTimer->start(3000); // 30 seconds
-
     // Generate number and get IP address
     myNumber = generateNumber();
     myIP = getLocalIpAddress();
+    // Set up election timer
+    if(myIP.toStdString() == "192.168.1.102"){
+        electionTimer = new QTimer(this);
+        connect(electionTimer, &QTimer::timeout, this, &metadataAnalytics::conductElection);
+        electionTimer->start(10000); // 30 seconds
+    }
 
     // Initialize initAnalyticsTimer
     initAnalyticsTimer = new QTimer(this);
     connect(initAnalyticsTimer, &QTimer::timeout, this, &metadataAnalytics::initAnalytics);
     //electionTimer->start(1500); // 30 seconds
     // Start the initAnalyticsTimer with a single-shot
-    initAnalyticsTimer->singleShot(8000, this, &metadataAnalytics::initAnalytics);
+    initAnalyticsTimer->singleShot(7000, this, &metadataAnalytics::initAnalytics);
 }
 
-
+// Function to initialize analytics and find replicas
 void metadataAnalytics::initAnalytics() {
     // Collect IPs of all analytics nodes
+    qDebug() << "===============" << "\n";
     std::vector<std::string> analyticsNodeIPs;
-    // qDebug() << "here1111111" << "\n";
     for(const auto& reg : registrations) {
-
-      //  qDebug() << "here222" << "\n";
         if (QString::fromStdString(reg.second.getType()) == "analytics") {
-
             analyticsNodeIPs.push_back((reg.second.getIpAddress()));
         }
     }
@@ -69,20 +82,26 @@ void metadataAnalytics::initAnalytics() {
     for(const auto& reg : registrations) {
         if (reg.second.getType() == "analytics") {
             // Find replicas for this analytics node
-           // qDebug() << "" << "\n";
             std::vector<std::string> replicas = findReplicas(reg.second.getIpAddress(), analyticsNodeIPs);
 
-            // Convert replicas to QStringList
-            QStringList replicasStringList;
+            // Store the replica information in the replicaMap
+            std::vector<ReplicaInfo> replicaInfoList;
             for (const auto& replica : replicas) {
-                replicasStringList << QString::fromStdString(replica);
+                // Assuming all replicas are initially marked as true
+                replicaInfoList.push_back({replica, true});
             }
+            replicaMap[reg.second.getIpAddress()] = replicaInfoList;
 
             // Construct API request
             QJsonObject requestData;
             requestData["requestType"] = "Init Analytics";
-            requestData["replicas"] = QJsonArray::fromStringList(replicasStringList);
-            qDebug() << requestData << "\n";
+            QJsonArray replicasArray;
+            for (const auto& replica : replicas) {
+                replicasArray.append(QString::fromStdString(replica));
+            }
+            requestData["replicas"] = replicasArray;
+            qDebug() << requestData;
+
             // Convert JSON data to QByteArray
             QJsonDocument doc(requestData);
             QByteArray requestDataBytes = doc.toJson();
@@ -92,6 +111,21 @@ void metadataAnalytics::initAnalytics() {
             if (nodeSocket && nodeSocket->state() == QAbstractSocket::ConnectedState) {
                 nodeSocket->write(requestDataBytes);
                 nodeSocket->flush();
+            }
+        }
+    }
+}
+// Function to update replica status
+void metadataAnalytics::updateReplicaStatus(const std::string& ipAddress, const std::string& replicaIP, bool status) {
+    auto it = replicaMap.find(ipAddress);
+    if (it != replicaMap.end()) {
+        // Search for the replica IP in the vector and update its status
+        for (auto& replicaInfo : it->second) {
+            if (replicaInfo.replicaIP == replicaIP) {
+                replicaInfo.isTrue = status;
+                qDebug() << "Updated status of replica" << QString::fromStdString(replicaIP)
+                         << "for IP" << QString::fromStdString(ipAddress) << "to" << status;
+                break;
             }
         }
     }
@@ -143,7 +177,7 @@ void metadataAnalytics::incomingConnection(qintptr socketDescriptor) {
         connect(clientSocket, &QTcpSocket::readyRead, this, &metadataAnalytics::readData);
         connect(clientSocket, &QTcpSocket::disconnected, this, &metadataAnalytics::analyticsNodeDisconnected);
         qDebug() << "Incoming connection established from IP:" << actualIP;
-        analyticNodes[actualIP.toStdString()] = clientSocket;
+        //analyticNodes[actualIP.toStdString()] = clientSocket;
 
 
     } else {
@@ -197,7 +231,11 @@ void metadataAnalytics::readData() {
             QString type = obj["nodeType"].toString();
             double computingCapacity = obj["computingCapacity"].toDouble(); // Extract computing capacity from JSON
             qDebug() << "Registration request from IP:" << ipAddress << "Type:" << type << "Computing Capacity:" << computingCapacity;
-            registerNode(ipAddress, type.toStdString(), computingCapacity);
+            analyticNodes[obj["ip"].toString().toStdString()] = clientSocket;
+            if(type.toStdString() == "analytics"){
+                totalAnalyticsServers++;
+            }
+            registerNode(obj["ip"].toString(), type.toStdString(), computingCapacity);
             broadcastNodeInfo();
         } else if (requestType == "Election Message") {
             int receivedNumber = obj["Current Number"].toInt();
@@ -210,8 +248,109 @@ void metadataAnalytics::readData() {
             // QJsonObject obj = value.toObject();
             std::string receivedNumber = obj["leaderIP"].toString().toStdString();
             std::string nodeType=obj["nodeType"].toString().toStdString();
-            leader =obj["leaderIP"].toString();
+            if(nodeType == "metadata Analytics"){
+                leader =obj["leaderIP"].toString();
+                if(leader != myIP){
+                    //disconnect(electionTimer, &QTimer::timeout, this, &metadataAnalytics::conductElection);
+                    disconnect(initAnalyticsTimer, &QTimer::timeout, this, &metadataAnalytics::initAnalytics);
+                }
+            }
+            else{
+                leaderIngestion = obj["leaderIP"].toString();
+            }
             qDebug()<<"Wining Node"<<receivedNumber<<"...Type...."<<nodeType;
+            broadcastNodeInfo();
+        }
+        else if (requestType == "ingestion") {
+            qDebug() << "Received ingestion request.";
+            // Increment request ID
+
+            // Get the data from the ingestion request
+            QJsonArray dataArray = obj["data"].toArray();
+            std::vector<std::string> data;
+            for (const auto& value : dataArray) {
+                data.push_back(value.toString().toStdString());
+            }
+            // Attach request ID to the data
+            QJsonObject requestData;
+            //requestData["requestID"] = requestId;
+            requestData["data"] = dataArray;
+
+            // Convert JSON data to QByteArray
+            QJsonDocument doc(requestData);
+            QByteArray requestDataBytes = doc.toJson();
+
+            // Send the data to one of the nodes of type "analytics"
+            distributeDataToAnalyticsServers(requestDataBytes);
+             qDebug() << "Sent out analytics request.";
+        }
+        else if (requestType == "analytics acknowledgment"){
+            qDebug() << "Received analytics acknowledgment.";
+
+            // Retrieve request ID from the JSON object
+            int requestId = obj["requestId"].toInt();
+
+            // Remove the request data from the map
+            if (requestDataMap.find(requestId) != requestDataMap.end()) {
+                requestDataMap.erase(requestId);
+                qDebug() << "Request data removed from requestDataMap for request ID:" << requestId;
+            } else {
+                qDebug() << "Request ID not found in requestDataMap:" << requestId;
+            }
+        }
+        else if(requestType == "query"){
+            // Find nodes of type "analytics" and send the JSON payload to each of them
+          //  qDebug() << "ytugijkbvgyuhjk\n";
+            for (const auto& node : nodeMap) {
+              //  qDebug() << nodeMap.size() << "\n";
+                if (node.second.nodeType == "analytics") {
+                    // Create a copy of the JSON object to send to each node
+                   // qDebug() << node.second.nodeType << "\n";
+                    QJsonObject queryObj = obj;
+
+                    // Add the request ID to the JSON object
+                    queryObj["requestId"] = requestIdQuery; // Replace 12345 with the actual request ID
+
+                    // Convert the modified JSON object to a JSON document
+                    QJsonDocument queryDoc(queryObj);
+
+                    // Convert the JSON document to a byte array
+                    QByteArray queryData = queryDoc.toJson();
+
+                    // Send the JSON payload to the node
+                    QTcpSocket *analyticsSocket = analyticNodes[node.second.ip.toStdString()];
+                    if (analyticsSocket) {
+                        analyticsSocket->write(queryData);
+                        analyticsSocket->flush();
+                        qDebug() << "Query sent to analytics node at IP:" << node.second.ip;
+                    } else {
+                        qDebug() << "Analytics node at IP:" << node.second.ip << "not found in analyticNodes.";
+                    }
+                }
+            }
+            requestIdQuery++;
+        }
+
+        else if(requestType == "query response"){
+            // Retrieve information from the JSON object
+            int requestId = obj["requestId"].toInt();
+            QString maxArea = obj["maxArea"].toString();
+            double maxAverage = obj["maxAverage"].toDouble();
+
+            // Check if the new maximum average is greater than the current value
+            if (requestQuery.find(requestId) == requestQuery.end() || maxAverage > requestQuery[requestId].second) {
+                // Update the requestQuery map only if the new maximum average is greater
+                requestQuery[requestId] = std::make_pair(maxArea.toStdString(), maxAverage);
+
+            }
+            qDebug() << "Updated requestQuery map - Request ID:" << requestId << ", Max Area:" << maxArea << ", Max Average:" << maxAverage;
+        }
+
+
+
+
+        else if(requestType == "analytics"){
+
         }
         else{
             qDebug()<<requestType<<"\n";
@@ -241,6 +380,112 @@ void metadataAnalytics::readData() {
         }
     }
 }
+
+
+void metadataAnalytics::distributeDataToAnalyticsServers(const QByteArray& data) {
+    // Get the data from the ingestion request
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    QJsonObject requestData = doc.object();
+    QJsonArray dataArray = requestData["data"].toArray();
+
+    // Determine the total number of analytics servers
+   //  = analyticNodes.size();
+
+    // Initialize requestId
+    //int requestId = 0;
+
+    // Iterate over each data point
+    for (const auto& value : dataArray) {
+        QJsonArray dataPoint = value.toArray();
+
+        // Extract timestamp from data point (assuming it's the first element)
+        //QString timestamp = dataPoint[0].toString();
+
+        // Extract hour from the timestamp
+        // Extract timestamp from data point (assuming it's the first element)
+        //QString timestamp = dataPoint[0].toString();
+
+        // Split the timestamp at the "@" symbol to get the time part
+        // Extract timestamp from data point (assuming it's the first element)
+        // Extract timestamp from data point (assuming it's the first element)
+        QString timestamp = dataPoint[0].toString();
+        int hour = 0;
+        // Split the timestamp at the "@" symbol to get the time part
+        QStringList dateTimeParts = timestamp.split('@');
+       // qDebug() << dateTimeParts << "\n";
+        if (dateTimeParts.size() >= 2) {
+            QString timePart = dateTimeParts[0];
+
+            // Split the time part at the ":" symbol to get hours and minutes
+            QStringList timeParts = timePart.split(':');
+            if (timeParts.size() >= 2) {
+                QString hourString = timeParts[0];
+                QString minuteString = timeParts[1];
+                QStringList hourParts = hourString.split('T');
+                // Convert hour and minute strings to integers
+         //       qDebug() << hourString << "==================>\n";
+                hour = hourParts[1].toInt();
+                int minute = minuteString.toInt();
+
+                // Now you have the hour and minute values
+           //     qDebug() << "Hour:" << hour << ", Minute:" << minute;
+            } else {
+                qDebug() << "Invalid time format in timestamp:" << timestamp;
+            }
+        } else {
+            qDebug() << "Invalid timestamp format:" << timestamp;
+        }
+
+
+
+        // Calculate which analytics server should receive the data based on the hour
+        int serverIndex = (hour * totalAnalyticsServers) / 24;
+        ++requestId;
+        // Get the IP address of the analytics server
+        std::string analyticsNodeIP;
+        int currentIndex = 0;
+        for (const auto& node : registrations) {
+            if (node.second.getType() == "analytics") {
+                if (currentIndex == serverIndex) {
+                    analyticsNodeIP = node.first;
+                    break;
+                }
+                currentIndex++;
+            }
+        }
+        qDebug() << hour << "," << serverIndex << "," << analyticsNodeIP << "\n";
+        // Send the data to the corresponding analytics server
+        if (!analyticsNodeIP.empty()) {
+            QTcpSocket* nodeSocket = analyticNodes[analyticsNodeIP];
+            if (nodeSocket && nodeSocket->state() == QAbstractSocket::ConnectedState) {
+                // Attach requestId and requestType to the data
+                QJsonObject requestData;
+                QJsonArray dataPointArray;
+                dataPointArray.append(dataPoint);
+
+                requestData["requestID"] = requestId;
+                requestData["requestType"] = "analytics";
+                requestData["data"] = dataPointArray;;
+                // Convert JSON data to QByteArray
+                QJsonDocument doc(requestData);
+                QByteArray requestDataBytes = doc.toJson();
+                requestDataMap[requestId] = requestDataBytes;
+                // Send the data
+                nodeSocket->write(requestDataBytes);
+                nodeSocket->flush();
+                qDebug() << "DONE------------------1" << "\n";
+            } else {
+                qDebug() << "Failed to send data to analytics node. Analytics node is not connected.";
+            }
+        } else {
+            qDebug() << "No analytics node found to send data to.";
+        }
+
+        // Store the data in the requestDataMap
+
+    }
+}
+
 
 void metadataAnalytics::processElectionMessage(int receivedNumber, const std::string& ipAddress) {
     // Compare received number with myNumber
@@ -344,7 +589,9 @@ void metadataAnalytics::broadcastNodeInfo() {
     QJsonObject parentNode;
     parentNode["requestType"] = "Node Discovery";
     parentNode["nodes"] = nodesArray;
-
+    parentNode["metadataAnalyticsLeader"] = leader;
+    parentNode["metadataIngestionLeader"] = leaderIngestion;
+    parentNode["initElectionIngestion"] = "192.168.1.109";
     QJsonDocument doc(parentNode);
     QByteArray nodeData = doc.toJson();
     qDebug() << registrations.size() << " ================>\n";
@@ -386,6 +633,13 @@ void metadataAnalytics::broadcastLeaderNodeInfo(const std::string& ipAddress) {
 
 void metadataAnalytics::registerNode(const QString& ipAddress, const std::string& type, double computingCapacity) {
     registrations[ipAddress.toStdString()] = Register(ipAddress.toStdString(), type, computingCapacity);
+    NodeInfo info;
+    info.nodeType = QString::fromStdString(type);
+    info.ip = (ipAddress);
+    info.computingCapacity = computingCapacity;
+
+    // Add the new node info to the nodeMap
+    nodeMap[ipAddress.toStdString()] = info;
 }
 
 void metadataAnalytics::deregisterNode(const QString& ipAddress) {
